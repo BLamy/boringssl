@@ -17,6 +17,7 @@
 #if defined(OPENSSL_AARCH64) && defined(OPENSSL_APPLE) && \
     !defined(OPENSSL_STATIC_ARMCAP) && !defined(OPENSSL_NO_ASM)
 
+#include <dlfcn.h>
 #include <sys/sysctl.h>
 #include <sys/types.h>
 
@@ -45,7 +46,19 @@ static int has_hw_feature(const char *name) {
   return value != 0;
 }
 
+// [RecordReplay] The driver's functions, looked up where the process has it.
+static void RecordReplayCall(const char *name) {
+  void *fnptr = dlsym(RTLD_DEFAULT, name);
+  if (fnptr) {
+    reinterpret_cast<void (*)()>(fnptr)();
+  }
+}
+
 void bssl::OPENSSL_cpuid_setup() {
+  // [RecordReplay] A replay doesn't ask about the CPU (see OPENSSL_init_cpuid),
+  // so what's asked here isn't part of a recording.
+  RecordReplayCall("RecordReplayBeginPassThroughEvents");
+
   // Apple ARM64 platforms have NEON and cryptography extensions available
   // statically, so we do not need to query them. In particular, there sometimes
   // are no sysctls corresponding to such features. See below.
@@ -71,6 +84,7 @@ void bssl::OPENSSL_cpuid_setup() {
       has_hw_feature("hw.optional.armv8_2_sha3")) {
     OPENSSL_armcap_P |= ARMV8_SHA3;
   }
+  RecordReplayCall("RecordReplayEndPassThroughEvents");
 }
 
 #endif  // OPENSSL_AARCH64 && OPENSSL_APPLE && !OPENSSL_STATIC_ARMCAP

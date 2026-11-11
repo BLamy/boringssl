@@ -12,6 +12,9 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#if defined(__APPLE__)
+#include <dlfcn.h>
+#endif
 #include <assert.h>
 #include <limits.h>
 #include <string.h>
@@ -1229,7 +1232,7 @@ DEFINE_METHOD_FUNCTION(EVP_AEAD, EVP_aead_aes_256_gcm_tls13) {
   out->openv_detached = aead_aes_gcm_openv_detached;
 }
 
-int EVP_has_aes_hardware() {
+static int EVP_has_aes_hardware_impl() {
 #if defined(OPENSSL_X86) || defined(OPENSSL_X86_64)
   return hwaes_capable() && crypto_gcm_clmul_enabled();
 #elif defined(OPENSSL_ARM) || defined(OPENSSL_AARCH64)
@@ -1237,4 +1240,25 @@ int EVP_has_aes_hardware() {
 #else
   return 0;
 #endif
+}
+
+// [RecordReplay] A replay doesn't look at the CPU (see OPENSSL_init_cpuid), so
+// the capabilities can read as absent there, and libssl's order of cipher
+// suites depends on this. The replay uses what the recording had.
+int EVP_has_aes_hardware() {
+  int result = EVP_has_aes_hardware_impl();
+#if defined(__APPLE__)
+  static void *record_replay_value = nullptr;
+  if (!record_replay_value) {
+    void *fnptr = dlsym(RTLD_DEFAULT, "RecordReplayValue");
+    record_replay_value = fnptr ? fnptr : reinterpret_cast<void *>(1);
+  }
+  if (record_replay_value != reinterpret_cast<void *>(1)) {
+    result = static_cast<int>(
+        reinterpret_cast<uintptr_t (*)(const char *, uintptr_t)>(
+            record_replay_value)("EVP_has_aes_hardware",
+                                 static_cast<uintptr_t>(result)));
+  }
+#endif
+  return result;
 }

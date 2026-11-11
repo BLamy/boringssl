@@ -12,6 +12,10 @@
 // See the License for the specific language governing permissions and
 // limitations under the License.
 
+#if defined(__APPLE__)
+#include <dlfcn.h>
+#endif
+
 #include <openssl/crypto.h>
 
 #include <assert.h>
@@ -86,7 +90,22 @@ uint32_t bssl::OPENSSL_get_armcap() {
 
 #if defined(NEED_CPUID)
 static bssl::CRYPTO_once_t once = CRYPTO_ONCE_INIT;
-void bssl::OPENSSL_init_cpuid() { CRYPTO_once(&once, OPENSSL_cpuid_setup); }
+void bssl::OPENSSL_init_cpuid() {
+#if defined(__APPLE__)
+  // [RecordReplay] A replay doesn't look at the CPU it's on. A replay can be
+  // carried on from a snapshot on another machine, and code that had checked
+  // for an instruction before would use it where it isn't there.
+  static int replaying = -1;
+  if (replaying < 0) {
+    void *fnptr = dlsym(RTLD_DEFAULT, "RecordReplayIsReplaying");
+    replaying = fnptr && reinterpret_cast<bool (*)()>(fnptr)() ? 1 : 0;
+  }
+  if (replaying) {
+    return;
+  }
+#endif
+  CRYPTO_once(&once, OPENSSL_cpuid_setup);
+}
 #endif
 
 void CRYPTO_library_init() {}
