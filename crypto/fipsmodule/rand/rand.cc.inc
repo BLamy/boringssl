@@ -21,6 +21,11 @@
 #include <stdlib.h>
 #endif
 
+#if defined(__linux__)
+#include <dlfcn.h>
+#include <sys/random.h>
+#endif
+
 #if defined(BORINGSSL_FIPS)
 #include <unistd.h>
 #endif
@@ -349,7 +354,7 @@ bcm_infallible bssl::BCM_rand_bytes_with_additional_data(
     return bcm_infallible::approved;
   }
 
-#if defined(OPENSSL_MACOS)
+#if defined(OPENSSL_MACOS) || defined(OPENSSL_LINUX)
   // [RecordReplay] When recording/replaying we just ask the system for random
   // data. This is simpler than making sure the seed data and cross-thread
   // interactions behave consistently when replaying: which thread first seeds
@@ -361,7 +366,20 @@ bcm_infallible bssl::BCM_rand_bytes_with_additional_data(
       record_replay_attach = fnptr ? fnptr : reinterpret_cast<void *>(1);
     }
     if (record_replay_attach != reinterpret_cast<void *>(1)) {
+#if defined(OPENSSL_LINUX)
+      // As replayio/boringssl does on Linux. RDRAND would otherwise be mixed
+      // in on x86-64, and an instruction's result isn't in a recording.
+      size_t done = 0;
+      while (done < out_len) {
+        ssize_t got = getrandom(out + done, out_len - done, 0);
+        if (got <= 0) {
+          abort();
+        }
+        done += static_cast<size_t>(got);
+      }
+#else
       arc4random_buf(out, out_len);
+#endif
       return bcm_infallible::approved;
     }
   }
